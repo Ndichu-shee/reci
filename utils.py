@@ -179,29 +179,15 @@ def filter_english_text(text):
     except:
         return ''
 
-# Feature Extraction Functions
 def clean_process_and_extract_features(text, tfidf_vectorizer):
-    """
-    Cleans the text, processes it, and extracts features for model input.
-    - Requires a pre-fitted TF-IDF vectorizer.
-    """
+    """Cleans, processes, and extracts features for the model."""
     # Step 1: Clean the text
     text = clean_text(text)
-    print(f"Text after cleaning: {text}")
     text = remove_stop_words(text)
-    print(f"Text after stop word removal: {text}")
-
-    # Step 2: Tokenize and POS tagging
     tokens = tokenize_text(text)
-    print(f"Tokenized text: {tokens}")
     pos_tags = pos_tagging(tokens)
-    print(f"POS-tagged tokens: {pos_tags}")
-
-    # Step 3: Extract relevant words
     relevant_words = extract_relevant_words(pos_tags)
-    print(f"Relevant words (POS-filtered): {relevant_words}")
 
-    # Step 4: Handle empty input and vectorize
     if not relevant_words.strip():
         tfidf_features = np.zeros((1, len(tfidf_vectorizer.get_feature_names_out())))
     else:
@@ -209,31 +195,17 @@ def clean_process_and_extract_features(text, tfidf_vectorizer):
 
     print(f"TF-IDF Features Shape: {tfidf_features.shape}")
 
-    # Step 5: MO features
-    mo_features = np.array([int(keyword in relevant_words) for keyword in mo_keywords]).reshape(1, -1)
-    print(f"MO Features: {mo_features}")
+    # Step 2: Handle keyword features
+    mo_features = np.array([1 if keyword in relevant_words else 0 for keyword in mo_keywords]).reshape(1, -1)
+    behavior_features = np.array([1 if keyword in relevant_words else 0 for keyword in behavior_keywords]).reshape(1, -1)
+    psychological_features = np.array([1 if keyword in relevant_words else 0 for keyword in psychological_keywords]).reshape(1, -1)
 
-    # Step 6: Behavioral features
-    behavior_features = np.array([int(keyword in relevant_words) for keyword in behavior_keywords]).reshape(1, -1)
-    print(f"Behavioral Features: {behavior_features}")
+    print(f"MO Features Shape: {mo_features.shape}")
+    print(f"Behavioral Features Shape: {behavior_features.shape}")
+    print(f"Psychological Features Shape: {psychological_features.shape}")
 
-    # Step 7: Psychological features
-    psychological_features = np.array([int(keyword in relevant_words) for keyword in psychological_keywords]).reshape(1, -1)
-    print(f"Psychological Features: {psychological_features}")
-
-    # Step 8: Combine all features
+    # Step 3: Combine all features
     combined_features = np.hstack([tfidf_features, mo_features, behavior_features, psychological_features])
-    print(f"Combined Features: {combined_features}")
+    print(f"Combined Features Shape: {combined_features.shape}")
 
     return combined_features
-
-# # Example keywords for MO, behavioral, and psychological features
-# mo_keywords = ['strangulation', 'knife', 'firearm', 'arson']
-# behavior_keywords = ['torture', 'murdered', 'stalking', 'rape']
-# psychological_keywords = ['depression', 'paranoia', 'aggression', 'narcissism']
-
-# # Example user input
-# example_text = "Anatoly Onoprienko was a serial killer who committed multiple murders in Ukraine."
-# processed_features = clean_process_and_extract_features(example_text, tfidf_vectorizer)
-# print("Processed features for the input:")
-# print(processed_features)
