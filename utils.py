@@ -7,6 +7,8 @@ import pickle
 from langdetect import detect
 tfidf_vectorizer = TfidfVectorizer()
 from nltk.corpus import stopwords
+from sklearn.exceptions import NotFittedError
+from nltk.corpus import stopwords
 
 from bs4 import BeautifulSoup
 
@@ -138,8 +140,9 @@ additional_stop_words = [
     ]
 
 
-# Preprocessing Steps
+# Preprocessing Functions
 def clean_text(text):
+    """Cleans the input text by removing unnecessary characters and normalizing it."""
     text = text.lower()
     text = re.sub(r'\([^()]*\)', '', text)  # Remove text in parentheses
     text = re.sub(r'\[.*?\]', '', text)  # Remove citation brackets
@@ -150,38 +153,43 @@ def clean_text(text):
     return text
 
 def remove_stop_words(text):
+    """Removes stop words and filler words from the text."""
     stop_words = set(stopwords.words('english'))
     additional_stop_words = ["um", "uh", "like", "actually", "basically", "you know"]
     stop_words.update(additional_stop_words)
     return ' '.join([word for word in text.split() if word not in stop_words])
 
-def remove_filler_words(text):
-    return ' '.join([word for word in text.split() if word not in filler_words])
-
 def tokenize_text(text):
+    """Tokenizes the cleaned text."""
     return word_tokenize(text)
 
 def pos_tagging(tokens):
+    """Performs POS tagging on the tokenized text."""
     return pos_tag(tokens)
 
 def extract_relevant_words(pos_tagged):
+    """Extracts relevant words based on POS tagging (nouns and adjectives)."""
     return ' '.join([word for word, pos in pos_tagged if pos in ['NN', 'JJ']])
 
 # Filter non-English text
 def filter_english_text(text):
+    """Filters out non-English text."""
     try:
         return text if detect(text) == 'en' else ''
     except:
         return ''
 
-def clean_process_and_extract_features(text):
+# Feature Extraction Functions
+def clean_process_and_extract_features(text, tfidf_vectorizer):
+    """
+    Cleans the text, processes it, and extracts features for model input.
+    - Requires a pre-fitted TF-IDF vectorizer.
+    """
     # Step 1: Clean the text
     text = clean_text(text)
     print(f"Text after cleaning: {text}")
     text = remove_stop_words(text)
     print(f"Text after stop word removal: {text}")
-    text = remove_filler_words(text)
-    print(f"Text after filler word removal: {text}")
 
     # Step 2: Tokenize and POS tagging
     tokens = tokenize_text(text)
@@ -193,33 +201,39 @@ def clean_process_and_extract_features(text):
     relevant_words = extract_relevant_words(pos_tags)
     print(f"Relevant words (POS-filtered): {relevant_words}")
 
-    # Step 4: Preprocess relevant words
-    relevant_words = ' '.join(re.findall(r'\b\w+\b', relevant_words))
-    print(f"Relevant words (cleaned): {relevant_words}")
-
-    # Step 5: Handle empty input
+    # Step 4: Handle empty input and vectorize
     if not relevant_words.strip():
         tfidf_features = np.zeros((1, len(tfidf_vectorizer.get_feature_names_out())))
     else:
         tfidf_features = tfidf_vectorizer.transform([relevant_words]).toarray()
 
     print(f"TF-IDF Features Shape: {tfidf_features.shape}")
-    print(f"TF-IDF Features: {tfidf_features}")
 
-    # Step 6: MO features
+    # Step 5: MO features
     mo_features = np.array([int(keyword in relevant_words) for keyword in mo_keywords]).reshape(1, -1)
     print(f"MO Features: {mo_features}")
 
-    # Step 7: Behavioral features
+    # Step 6: Behavioral features
     behavior_features = np.array([int(keyword in relevant_words) for keyword in behavior_keywords]).reshape(1, -1)
     print(f"Behavioral Features: {behavior_features}")
 
-    # Step 8: Psychological features
+    # Step 7: Psychological features
     psychological_features = np.array([int(keyword in relevant_words) for keyword in psychological_keywords]).reshape(1, -1)
     print(f"Psychological Features: {psychological_features}")
 
-    # Step 9: Combine all features
+    # Step 8: Combine all features
     combined_features = np.hstack([tfidf_features, mo_features, behavior_features, psychological_features])
     print(f"Combined Features: {combined_features}")
 
     return combined_features
+
+# # Example keywords for MO, behavioral, and psychological features
+# mo_keywords = ['strangulation', 'knife', 'firearm', 'arson']
+# behavior_keywords = ['torture', 'murdered', 'stalking', 'rape']
+# psychological_keywords = ['depression', 'paranoia', 'aggression', 'narcissism']
+
+# # Example user input
+# example_text = "Anatoly Onoprienko was a serial killer who committed multiple murders in Ukraine."
+# processed_features = clean_process_and_extract_features(example_text, tfidf_vectorizer)
+# print("Processed features for the input:")
+# print(processed_features)
