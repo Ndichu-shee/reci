@@ -1,315 +1,209 @@
-import numpy as np
-import pandas as pd
-from flask import Flask, request, jsonify
-import joblib
-from flask_cors import CORS
-from tensorflow.keras.models import load_model
-from tensorflow.keras import backend as K
+import os
 import re
+import string
+import emoji
+import pickle
+from bs4 import BeautifulSoup
 from nltk.tokenize import word_tokenize
-from nltk.corpus import stopwords
-from nltk import pos_tag
-import logging
-from langdetect import detect
-# Keywords for feature extraction
-mo_keywords = [
-    'young', 'children', 'teenager', 'strangulation', 'weapon', 
-    'knife', 'firearm', 'poison', 'arson', 'blunt object', 
-    'suffocation', 'drowning', 'abduction', 'disguise', 'ritual', 
-    'sedation', 'chloroform', 'ambush', 'stalking', 'decapitation', 
-    'asphyxiation', 'bludgeoning', 'toxic', 'drugging', 'overdose', 
-    'hanging', 'beheading', 'mutilation', 'explosives', 'torture', 
-    'electrocution', 'rope', 'binding', 'axe', 'club', 
-    'scalpel', 'acid', 'trap', 'entrapment', 'concealment', 
-    'disposal', 'body parts', 'massacre', 'premeditation', 
-    'manipulation', 'coercion', 'vehicle', 'hunting', 'booby trap', 
-    'ruse', 'camouflage', 'home invasion', 'brute force', 'slashing'
-]
-behavior_keywords = [
-    'torture', 'murdered', 'stalking', 'rape', 'assault', 
-    'necrophilia', 'psychosis', 'suicidal', 'abuse', 'depression',
-    'homicide', 'strangulation', 'dismemberment', 'ritualistic', 
-    'kidnapping', 'sadism', 'voyeurism', 'obsession', 'manipulation', 
-    'arson', 'compulsion', 'delusions', 'schizophrenia', 'paranoia',
-    'narcissism', 'psychopathy', 'violence', 'trauma', 'mutilation',
-    'control', 'dominance', 'fantasies', 'sociopathy', 'pedophilia',
-    'exploitation', 'betrayal', 'infliction', 'victimization',
-    'revenge', 'power', 'intimidation', 'hunting', 'isolation',
-    'harassment', 'addiction', 'escalation', 'deceit', 'maniacal',
-    'disguise', 'repression', 'manhunt', 'insanity', 'hostility'
-]
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import nltk
+from scipy import sparse  # For padding/truncating sparse matrices
 
-psychological_keywords = [
-    'depression', 'paranoia', 'aggression', 'narcissism', 'anxiety',
-    'guilt', 'psychosis', 'trauma', 'sadism', 'obsession', 'mania',
-    'delusion', 'schizophrenia', 'compulsion', 'neurosis', 'psychopathy',
-    'sociopathy', 'self-harm', 'melancholia', 'euphoria', 'apathy',
-    'insomnia', 'detachment', 'hallucination', 'fear', 'anger',
-    'isolation', 'hostility', 'addiction', 'impulsivity', 'violence',
-    'phobia', 'grief', 'emotional', 'instability', 'manipulation',
-    'revenge', 'control', 'loneliness', 'despair', 'suicidal',
-    'bipolar', 'hypomania', 'dissociation', 'alienation',
-    'repression', 'hypervigilance', 'anhedonia', 'helplessness',
-    'dependency', 'remorse', 'mood swings', 'withdrawal'
-]
+# Download necessary NLTK data
+nltk.download('punkt')
 
-filler_words = [
-        "um", "uh", "like", "you know", "actually", "basically", "sort of", "kind of",
-        "I mean", "you see", "well", "so", "right", "okay", "anyways", "look", "intially"
-        "listen", "believe me", "virtually", "practically", "probably", "maybe", "perhaps",
-        "frankly", "nearly", "almost", "essentially", "utterly", "completely","really"
-        "just", "only", "mainly", "stuff", "thing", "things", "somewhat", "seemingly"
-        "in a sense", "at the end of the day", "to be honest", "you know what I mean",
-        "to tell you the truth", "in other words", "as a matter of fact", "in fact",
-        "for the most part", "on the whole", "generally", "usually", "frequently",
-        "often", "occasionally", "at least", "kind of", "sort of", "more or less",
-        "up to a point", "in many ways", "in some way", "as it were", "in effect",
-        "in reality", "to some extent", "to a certain extent", "likely", "really",
-        "presumably", "ostensibly", "evidently", "seemingly", "apparently",
-        "probably", "likely", "somehow", "someway", "let's say", "let's",
-        "roughly", "you know", "at all", "basically", "let me be clear",
-        "if you will", "as such", "let's be honest", "in truth", "sort of like",
-        "in general", "like I said", "as far as I know", "suffice it to say",
-        "for what it's worth", "I guess", "I suppose", "certainly", "absolutely",
-        "totally", "merely", "specifically", "explicitly", "implicitly","exactly"
-        "in particular", "especially", "not really", "not entirely", "particularly"
-        "not totally", "to be fair", "to clarify", "to put it simply",
-        "to put it mildly", "let me put it this way", "the thing is",
-        "it's like", "I mean to say", "just saying", "and all",
-        "if you know what I mean", "as far as I'm concerned", "for instance",
-        "for example", "such as", "you might say", "that is",
-        "like I said before", "and stuff", "or something", "or whatever",
-        "basically", "kind of like", "just about", "in some respects",
-        "to make a long story short", "when it comes to", "in this case",
-        "in light of", "and so on", "and whatnot",
-        'actually', 'ah', 'alright', 'anyway', 'apparently', 'basically', 'er', 'frankly',
-        'honestly', 'just', 'kinda', 'like', 'literally', 'look', 'obviously', 'okay',
-        'really', 'right', 'so', 'truthfully', 'uh', 'um', 'well', 'yeah',"Aaah", "Umm",
-        "Uhh", "Awww", "Eh", "Erm", "Hmmm", "Oh", "Mmm", "Like", "You know", "Sort of",
-        "Kind of", "I mean", "Actually", "Basically", "Literally", "Right", "Okay", "Well",
-        "So", "Uh-huh", "Yeah", "Hmm", "Ahh", "Hmmmm", "Ehhh", "Y'know", "Let's see", "Alright",
-        "Right?", "Honestly", "Seriously", "Just", "Anyway", "Look", "Listen", "Believe me", "To be honest",
-        "At the end of the day","Aah", "Aaah", "Aaaaah", "Umm", "Ummm", "Ummmm", "Uhh", "Uhhh", "Uhhhh", "Awww",
-        "Awwww", "Awwwww", "Hmm", "Hm", "Hmmmm", "Oh", "Ooh", "Ohhh", "Oooooh", "Er", "Err", "Errr", "Yeah", "Yeaah",
-        "Yeeeah", "Yeeeaaaah", "Like", "Liiike", "Liiiiike", "Okay", "Okaaay", "Ok", "Oooookay", "Right", "Riiight", "Riiiight", "So", "Sooo", "Soooo", "Sooooo", "No", "Nooo", "Noooo", "Nooooo", "Well", "Weell", "Weeellll"
-    ]
-
-additional_stop_words = [
-        "movie", "film", "films", "cinema", "watch", "watched", "watching", "seen","theatre"
-        "story", "stories", "character", "characters", "plot", "scene", "scenes","rehearsal"
-        "performance", "performances", "acting", "actor", "actress", "directing","release"
-        "director", "script", "scripts", "dialogue", "dialogues", "sound", "music","setting"
-        "score", "visuals", "effects", "special", "time", "just", "still","advertised"
-        "too", "even", "also", "that", "it", "its", "them", "they", "you", "your",
-        "there", "here", "these", "those", "but", "and",
-        "or", "as", "if", "for", "to", "of", "in", "with", "at", "by", "about",
-        "from", "this", "what", "where", "who", "when", "why", "how", "which",
-        "all", "any", "some", "no", "not", "only", "than", "then", "now", "back",
-        "let", "see", "go", "make", "need", "could", "should", "would", "can",
-        "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
-        "do", "does", "did", "doing", "s", "t", "ve", "ll", "m",'into', 'wouldn', 'end', 'then', 'viewers', 'didn', 'after', 'these', 'above', 'same',
-    'actresses', 'does', 'screens', 'companies', 'minute', 'feelings', 'minutes', 'so',
-    'second', 've', 'show', 'about', 'out', 'he', 'netflix', 'ours', 'itself', 'hours',
-    'fan', 'hollywood', 'most', 'beginning', 'anybody', 'if', 'having', 'casted', 'setting',
-    'day', 'few', 'opinion', 'location', 'again', 'of', 'actors', 'some', 'off', 'anyone',
-    'story', 'scripts', 'under', 'ratings', 'shan', 'below', 'people', 'amazon', 'y',
-    'everyone', 'her', 'fans', 'won', 'who', 'hadn', 'watching', 'but', 'them', 'person',
-    'movie', 'view', 'soundtrack', 'not', 'actress', 'everybody', 'you', 'characters',
-    'themselves', 'between', 'any', 'himself', 'days', 'll', 'an', 'plot', 'times',
-    'performances', 'ending', 'has', 'production', 'all', 'company', 'wasn', 'me', 'she',
-    'moment', 'doing', 'review', 'd', 'because', 'myself', 'mustn', 'have', 'screen',
-    'places', 'episodes', 'on', 'fox', 'storyline', 'project', 'tomatoes', 'somebody',
-    'can', 'through', 'rotten', 'o', 'cinema', 'this', 'roles', 'series', 'imdb', 'that',
-    'no', 'marvel', 'disney', 'character', 'than', 'both', 'as', 'now', 'against', 'further',
-    'ain', 'thoughts', 'in', 'views', 'shouldn', 'ourselves', 'what', 'when', 'don', 'mightn',
-    'episode', 'rating', 'are', 'and', 'script', 'trailer', 'plus', 'haven', 'just', 'bollywood',
-    'film', 'projects', 'down', 'set', 'our', 't', 'music', 'how', 'was', 'theme', 'hour',
-    'being', 'where', 'place', 'score', 'dc', 'yourself', 'should', 'scenes', 'whom',
-    'tomorrow', 'trailers', 'why', 'moments', 'nor', 'too', 'actor', 'they', 'time', 'hasn',
-    'at', 'start', 'while', 'years', 'work', 'been', 'each', 'performance', 'had', 'his',
-    'hers', 's', 'viewer', 'reviews', 'emotion', 'to', 'very', 'from', 'watch', 'its', 'am',
-    'works', 'we', 'before', 'ma', 'their', 'my', 'here', 'the', 'm', 'more', 'up', 'which',
-    'only', 'prime', 'weren', 'produced', 'it', 'scene', 'year', 'do', 'over', 'youtube',
-    'such', 'isn', 're', 'theirs', 'seasons', 'is', 'be', 'or', 'once', 'opinions', 'yours',
-    'feeling', 'seconds', 'other', 'were', 'own', 'night', 'with', 'for', 'doesn', 'there',
-    'during', 'did', 'season', 'those', 'role', 'cast', 'locations', 'director', 'herself',
-    'a', 'hulu', 'by', 'will', 'needn', 'nights', 'aren', 'your', 'themes', 'someone',
-    'couldn', 'emotions', 'until', 'yesterday', 'i', 'today', 'yourselves', 'him', 'producer'
-    ]
-
-# Set up logging for error handling
-logging.basicConfig(filename='app.log', level=logging.ERROR)
-
+# Initialize Flask app
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 app.config["CORS_HEADERS"] = "Content-Type"
 
-# **Custom MSE Loss (if applicable to Keras models)**
-def custom_mse_loss(y_true, y_pred):
-    return K.mean(K.square(y_true - y_pred), axis=-1)
-
-# **File Paths**
-VECTORIZER_PATH = "models/tfidf_vectorizer.pkl"
-MODEL_PATHS = {
-    "cnn": "models/cnn.h5",
-    # "gradient_boosting": "models/gradient_boosting.pkl",
-    "logistic_regression": "models/logistic_regression.pkl",
-    "mlp": "models/mlp.h5",
-    "random_forest": "models/random_forest.pkl",
-    "svm": "models/svm.pkl",
-}
-
-# **Load TF-IDF Vectorizer and Models**
-models = {}
-tfidf_vectorizer = None
-
-try:
-    tfidf_vectorizer = joblib.load(VECTORIZER_PATH)
-    print("TF-IDF vectorizer loaded successfully.")
-except Exception as e:
-    logging.error(f"Error loading TF-IDF vectorizer: {e}")
-    print(f"Error loading TF-IDF vectorizer: {e}")
-
-for model_name, model_path in MODEL_PATHS.items():
-    try:
-        if model_path.endswith(".h5"):
-            models[model_name] = load_model(model_path, custom_objects={'custom_mse_loss': custom_mse_loss})
-        else:
-            models[model_name] = joblib.load(model_path)
-        print(f"{model_name} model loaded successfully.")
-    except Exception as e:
-        logging.error(f"Error loading {model_name}: {e}")
-        print(f"Error loading {model_name}: {e}")
-
-# **Preprocessing Functions**
-def clean_text(text):
-    """Cleans the input text."""
-    text = text.lower()
-    text = re.sub(r'\([^()]*\)', '', text)
-    text = re.sub(r'\[.*?\]', '', text)
-    text = re.sub(r'<.*?>', '', text)
-    text = re.sub(r'http\S+|www\S+', '', text)
-    text = re.sub(r'[^\w\s]', '', text)
-    text = re.sub(r'\s+', ' ', text).strip()
+# Define preprocessing functions
+def remove_html_tags(text):
+    if isinstance(text, str):
+        soup = BeautifulSoup(text, "html.parser")
+        return soup.get_text(separator=" ")
     return text
 
-def remove_stop_words(text):
-    """Removes stop words."""
-    stop_words = set(stopwords.words('english'))
-    additional_stop_words = ["um", "uh", "like", "actually", "basically", "you know"]
-    stop_words.update(additional_stop_words)
-    return ' '.join([word for word in text.split() if word not in stop_words])
+def remove_urls(text):
+    return re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
+
+def remove_emojis(text):
+    return emoji.replace_emoji(text, replace='')
+
+def remove_punctuation(text):
+    return text.translate(str.maketrans('', '', string.punctuation))
+
+def remove_extra_whitespace(text):
+    return re.sub(r'\s+', ' ', text).strip()
+
+def expand_contractions(text):
+    contractions_dict = {
+        # Add contractions mapping here
+    }
+    for contraction, expansion in contractions_dict.items():
+        text = text.replace(contraction, expansion)
+    return text
 
 def tokenize_text(text):
-    """Tokenizes the text."""
     return word_tokenize(text)
 
-def pos_tagging(tokens):
-    """Performs POS tagging."""
-    return pos_tag(tokens)
+# Preprocess user input
+def preprocess_user_input(input_data):
+    cleaned_data = {}
+    key_mapping = {
+        "vocationaltraining": "vocational_training",
+        "currentconviction": "current_conviction",
+        "previousconviction": "previous_conviction",
+        "gender": "gender",
+        "age": "age",
+        "location": "location",
+        "familysupport": "family_support"
+    }
+    for key, value in input_data.items():
+        normalized_key = key.strip().lower().replace(" ", "")
+        mapped_key = key_mapping.get(normalized_key, normalized_key)
+        if isinstance(value, str):
+            cleaned_text = value
+            cleaned_text = remove_html_tags(cleaned_text)
+            cleaned_text = remove_urls(cleaned_text)
+            cleaned_text = remove_emojis(cleaned_text)
+            cleaned_text = remove_punctuation(cleaned_text)
+            cleaned_text = remove_extra_whitespace(cleaned_text)
+            cleaned_text = expand_contractions(cleaned_text)
+            cleaned_text = tokenize_text(cleaned_text)
+            cleaned_data[mapped_key] = cleaned_text
+        else:
+            cleaned_data[mapped_key] = value
 
-def extract_relevant_words(pos_tagged):
-    """Extracts relevant words based on POS tagging."""
-    return ' '.join([word for word, pos in pos_tagged if pos in ['NN', 'JJ']])
+    # Debugging print
+    print("Preprocessed input data:", cleaned_data)
 
-def filter_english_text(text):
-    """Filters out non-English text."""
-    try:
-        return text if detect(text) == 'en' else ''
-    except:
-        return ''
+    if 'vocational_training' not in cleaned_data:
+        raise ValueError("Key 'vocational_training' is missing from preprocessed data.")
+    return cleaned_data
 
-def clean_process_and_extract_features(text, tfidf_vectorizer):
-    """Cleans, processes, and extracts features for the model."""
-    # Step 1: Clean the text
-    text = clean_text(text)
-    text = remove_stop_words(text)
-    tokens = tokenize_text(text)
-    pos_tags = pos_tagging(tokens)
-    relevant_words = extract_relevant_words(pos_tags)
+# Load models
+def load_models():
+    models = {}
+    model_names = ["svm", "random_forest", "gradient_boosting"]
+    for model_name in model_names:
+        model_path = os.path.join("models", f'{model_name}.pkl')
+        with open(model_path, 'rb') as file:
+            models[model_name] = pickle.load(file)
+    return models
 
-    # Step 2: Handle empty input and vectorize
-    if not relevant_words.strip():
-        tfidf_features = np.zeros((1, len(tfidf_vectorizer.get_feature_names_out())))
+# Load vectorizer
+def load_vectorizer():
+    vectorizer_path = os.path.join("models", "tfidf_vectorizer.pkl")
+    with open(vectorizer_path, 'rb') as file:
+        vectorizer = pickle.load(file)
+    # Debugging prints
+    print("Vectorizer vocabulary size:", len(vectorizer.vocabulary_))
+    print("Sample vocabulary:", list(vectorizer.vocabulary_.items())[:10])
+    return vectorizer
+
+# Map prediction to label
+def map_prediction_to_label(prediction):
+    print(f"Mapping prediction: {prediction}")
+    if prediction == 0:
+        return "Non-Recidivism"
+    elif prediction == 1:
+        return "Recidivism"
     else:
-        tfidf_features = tfidf_vectorizer.transform([relevant_words]).toarray()
+        return "Unknown"  # Handle unexpected cases explicitly
 
-    print(f"TF-IDF Features Shape: {tfidf_features.shape}")
+# Align input with model expectations
+def align_features_with_model(numeric_features, model):
+    expected_features = model.n_features_in_
+    actual_features = numeric_features.shape[1]
+    print(f"Aligning features: model expects {expected_features}, input has {actual_features}")
+    
+    if actual_features < expected_features:
+        padding = sparse.csr_matrix((numeric_features.shape[0], expected_features - actual_features))
+        numeric_features = sparse.hstack([numeric_features, padding])
+    elif actual_features > expected_features:
+        numeric_features = numeric_features[:, :expected_features]
+    print("Aligned features shape:", numeric_features.shape)
+    return numeric_features
 
-    # Step 3: Handle keyword features
-    mo_features = np.array([1 if keyword in relevant_words else 0 for keyword in mo_keywords]).reshape(1, -1)
-    behavior_features = np.array([1 if keyword in relevant_words else 0 for keyword in behavior_keywords]).reshape(1, -1)
-    psychological_features = np.array([1 if keyword in relevant_words else 0 for keyword in psychological_keywords]).reshape(1, -1)
+def make_predictions(models, cleaned_data):
+    try:
+        # Ensure 'vocational_training' key exists
+        if 'vocational_training' not in cleaned_data:
+            raise ValueError("Key 'vocational_training' is missing from preprocessed data.")
 
-    # Step 4: Combine all features
-    combined_features = np.hstack([tfidf_features, mo_features, behavior_features, psychological_features])
-    print(f"Combined Features Shape: {combined_features.shape}")
+        # Preprocess and transform input text
+        feature_input = " ".join(cleaned_data['vocational_training'])
+        vectorizer = load_vectorizer()
+        numeric_features = vectorizer.transform([feature_input])
+        print("Transformed feature shape:", numeric_features.shape)
 
-    return combined_features
+        predictions = {}
+        for model_name, model in models.items():
+            try:
+                # Handle SVM separately if it requires dense input
+                numeric_features_dense = numeric_features.toarray() if model_name == "svm" else numeric_features
+                
+                # Align features with model's expected input dimensions
+                aligned_features = align_features_with_model(numeric_features_dense, model)
+                print(f"Aligned features shape: {aligned_features.shape}")
 
-# **Flask Routes**
-@app.route("/")
-def home():
-    return "Welcome to the AI Prediction API!"
+                # Get the prediction and probability
+                prediction = model.predict(aligned_features)
+                prediction_proba = model.predict_proba(aligned_features)  # Get class probabilities
 
-@app.route("/predict", methods=["POST", "GET"])
+                print(f"Raw prediction for {model_name}: {prediction}")
+                print(f"Prediction probabilities for {model_name}: {prediction_proba}")
+
+                # Assuming binary classification, the probability for class 1 (Recidivism)
+                confidence_score = prediction_proba[0][1]  # Probability of class 1 (Recidivism)
+
+                # Directly return the raw prediction and confidence score
+                predictions[model_name] = {
+                    "prediction": prediction[0],  # Raw prediction
+                    "confidence_score": confidence_score  # Confidence score
+                }
+
+                print(f"Prediction for {model_name}: {prediction[0]}, Confidence Score: {confidence_score}")
+            except Exception as e:
+                # Log and skip problematic models
+                print(f"Skipping model '{model_name}' due to error: {str(e)}")
+
+        # If no valid predictions were made
+        if not predictions:
+            raise RuntimeError("No valid predictions could be made with the loaded models.")
+
+        # Return the predictions and confidence scores as the final response
+        return predictions
+    except Exception as e:
+        raise RuntimeError(f"Error during prediction: {str(e)}")
+
+
+
+# Predict endpoint
+@app.route('/predict', methods=['POST'])
 def predict():
-    if request.method == "POST":
-        try:
-            data = request.get_json()
-            biography = data.get("biography", "").strip()
+    try:
+        # Parse and validate input data
+        user_input = request.json
+        if not user_input:
+            return jsonify({"error": "No input data provided"}), 400
+        print("Received input:", user_input)  # Debugging print
+        
+        # Preprocess input and load models
+        cleaned_user_input = preprocess_user_input(user_input)
+        models = load_models()
+        
+        # Make predictions
+        predictions = make_predictions(models, cleaned_user_input)
+        print(f"#######{predictions}#######")
+        return jsonify(predictions), 200
+    except Exception as e:
+        # Return error in response
+        print("Error during prediction:", str(e))  # Debugging print
+        return jsonify({"error": str(e)}), 500
 
-            if not biography:
-                return jsonify({"error": "Biography text is required"}), 400
-
-            # Process and extract features
-            cleaned_input_features = clean_process_and_extract_features(biography, tfidf_vectorizer)
-            print(f"Processed features shape: {cleaned_input_features.shape}")
-
-            # Iterate through models and make predictions
-            best_model = None
-            best_prediction = None
-            highest_confidence = -1
-            confidence_scores = {}
-
-            for model_name, model in models.items():
-                print(f"Making prediction with {model_name}...")
-
-                if model_name in ["cnn", "mlp"]:
-                    reshaped_input = cleaned_input_features.reshape((1, -1))
-                    prediction = model.predict(reshaped_input)
-                    confidence = float(np.max(prediction))
-                    prediction = np.argmax(prediction)
-                elif model_name == "svm":
-                    decision_score = model.decision_function(cleaned_input_features)
-                    confidence = float(1 / (1 + np.exp(-decision_score[0])))
-                    prediction = model.predict(cleaned_input_features)
-                    prediction = prediction[0]  # Ensure it's not an array
-                elif hasattr(model, "predict_proba"):
-                    prediction_probabilities = model.predict_proba(cleaned_input_features)
-                    confidence = float(max(prediction_probabilities[0]))
-                    prediction = model.predict(cleaned_input_features)
-                    prediction = prediction[0]  # Ensure it's not an array
-                else:
-                    prediction = model.predict(cleaned_input_features)
-                    prediction = prediction[0] if isinstance(prediction, (np.ndarray, list)) else prediction
-                    confidence = 1  # Default confidence for non-probabilistic models
-
-                # Store the confidence score
-                confidence_scores[model_name] = confidence
-                if confidence > highest_confidence:
-                    highest_confidence = confidence
-                    best_prediction = prediction
-
-            # Return the best prediction
-            return jsonify({
-                "prediction": str(best_prediction) if best_prediction is not None else None,  # Convert to string for JSON compatibility
-                "confidence": float(highest_confidence) if highest_confidence is not None else None,
-                "confidence_scores": {model: float(conf) for model, conf in confidence_scores.items()}
-            })
-
-        except Exception as e:
-            logging.error(f"Error during prediction: {e}")
-            return jsonify({"error": str(e)}), 500
-if __name__ == "__main__":
-    app.run(debug=True, port=7070)
+# Run Flask app
+if __name__ == '__main__':
+    app.run(debug=True, port=3000)
